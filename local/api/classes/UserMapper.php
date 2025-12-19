@@ -9,6 +9,16 @@ class UserMapper
     public static function map(array $arUser, bool $full = false): array
     {
         $groups = CUser::GetUserGroup($arUser['ID']);
+
+        $role = null;
+        if (in_array(Constants::GROUP_ADMINS, $groups)) {
+            $role = 'admin';
+        } elseif (in_array(Constants::GROUP_TEACHERS, $groups)) {
+            $role = 'teacher';
+        } elseif (in_array(Constants::GROUP_STUDENTS, $groups)) {
+            $role = 'student';
+        }
+
         $result = [
             'ID' => $arUser['ID'],
             'LOGIN' => $arUser['LOGIN'] ?? '',
@@ -19,9 +29,7 @@ class UserMapper
         ];
 
         if ($full) {
-            $result['isTeacher'] = in_array(Constants::GROUP_TEACHERS, $groups);
-            $result['isStudent'] = in_array(Constants::GROUP_STUDENTS, $groups);
-            $result['isAdmin']   = in_array(Constants::GROUP_ADMINS, $groups);
+            $result['ROLE'] = $role;
         }
 
         return $result;
@@ -42,11 +50,11 @@ class UserMapper
     public static function getCurrentUserGroups(): array
     {
         global $USER;
-        return $USER->GetUserGroupArray();
+        return $USER->GetUserGroupArray() ?? [];
     }
 
     public static function getUserGroups(int $userId): array
     {
-        return CUser::GetUserGroup($userId);
+        return CUser::GetUserGroup($userId) ?? [];
     }
 }

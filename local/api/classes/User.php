@@ -21,7 +21,7 @@ class User
     {
         self::checkAuth();
 
-        if (!in_array(Constants::GROUP_ADMINS, UserMapper::getCurrentUserGroups())) {
+        if (!UserMapper::hasGroup(UserMapper::getCurrentUserId(), Constants::GROUP_ADMINS)) {
             throw new \Exception('Доступ запрещен: требуется роль администратора');
         }
     }
@@ -29,14 +29,14 @@ class User
 
     // Создание пользователя
     // /api/User/add/?login=test&password=123123&email=test@mail.ru&role=student
-    public static function add(array $arData): array
+    public static function add(array $arRequest): array
     {
         self::checkAdmin();
 
-        $login    = trim($arData['login'] ?? '');
-        $password = trim($arData['password'] ?? '');
-        $email    = trim($arData['email'] ?? '');
-        $role     = strtolower(trim($arData['role'] ?? ''));
+        $login    = trim($arRequest['login'] ?? '');
+        $password = trim($arRequest['password'] ?? '');
+        $email    = trim($arRequest['email'] ?? '');
+        $role     = strtolower(trim($arRequest['role'] ?? ''));
 
         if (CUser::GetByLogin($login)->Fetch()) {
             throw new \Exception('Пользователь с таким логином уже существует');
@@ -50,11 +50,9 @@ class User
             case 'student':
                 $groupId = Constants::GROUP_STUDENTS;
                 break;
-
             case 'teacher':
                 $groupId = Constants::GROUP_TEACHERS;
                 break;
-
             default:
                 throw new \Exception('Некорректная роль. Допустимые значения: student, teacher');
         }
@@ -73,22 +71,17 @@ class User
             throw new \Exception('Не удалось создать пользователя: ' . $user->LAST_ERROR);
         }
 
-        return UserMapper::map(
-            CUser::GetByID($userId)->Fetch(),
-            true
-        );
+        return ['status' => 'success', 'message' => 'Пользователь успешно создан'];
     }
 
     // Удаление пользователя
     // /api/User/delete/?id=5
-    public static function delete(array $arData): bool
+    public static function delete(array $arRequest): array
     {
         self::checkAdmin();
 
-        $userId = (int)($arData['id'] ?? 0);
-        if (!$userId) {
-            throw new \Exception('Не передан ID пользователя');
-        }
+        $userId = (int)($arRequest['id'] ?? 0);
+        if (!$userId) throw new \Exception('Не передан ID пользователя');
 
         if ($userId === UserMapper::getCurrentUserId()) {
             throw new \Exception('Нельзя удалить самого себя');
@@ -99,7 +92,7 @@ class User
             throw new \Exception('Не удалось удалить пользователя');
         }
 
-        return true;
+        return ['status' => 'success', 'message' => 'Пользователь успешно удален'];
     }
 
     private static function getList(array $arRequest = []): array

@@ -6,10 +6,14 @@ use CUser;
 class Auth
 {
     // Вход
-    // /api/Auth/login/?login=123&password=123
-    public static function login(array $arRequest): array
+    // /api/Auth/login/
+    public static function login(array $arRequest = []): array
     {
         global $USER;
+
+        if ($USER->IsAuthorized()) {
+            throw new \Exception('Вы уже авторизованы');
+        }
 
         $login = trim($arRequest['login'] ?? '');
         $password = (string)($arRequest['password'] ?? '');
@@ -22,8 +26,10 @@ class Auth
             throw new \Exception('Неверный логин или пароль');
         }
 
-        $arUser = CUser::GetByID($USER->GetID())->Fetch();
-        return ['user' => UserMapper::map($arUser, true)];
+        return [
+            'status' => 'success',
+            'message' => 'Вы успешно авторизованы'
+        ];
     }
 
     // Выход
@@ -38,7 +44,10 @@ class Auth
 
         $USER->Logout();
 
-        return ['success' => true];
+        return [
+            'status' => 'success',
+            'message' => 'Вы успешно вышли из системы'
+        ];
     }
 
     // Получение профиля текущего пользователя
