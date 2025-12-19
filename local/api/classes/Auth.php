@@ -1,36 +1,17 @@
 <?php
-
 namespace Legacy\API;
 
 use CUser;
-use Legacy\General\Constants;
 
 class Auth
 {
-    private static function mapUser(array $arUser): array
-    {
-        $userGroups = CUser::GetUserGroup($arUser['ID']);
-
-        return [
-            'ID'            => $arUser['ID'],
-            'LOGIN'         => $arUser['LOGIN'],
-            'EMAIL'         => $arUser['EMAIL'],
-            'FIRST_NAME'     => $arUser['NAME'] ?? '',
-            'LAST_NAME'      => $arUser['LAST_NAME'] ?? '',
-            'SECOND_NAME'    => $arUser['SECOND_NAME'] ?? '',
-            'isTeacher'     => in_array(Constants::GROUP_TEACHERS, $userGroups),
-            'isStudent'     => in_array(Constants::GROUP_STUDENTS, $userGroups),
-            'isAdmin'       => in_array(Constants::GROUP_ADMINS, $userGroups)
-        ];
-    }
-
-    // Авторизация
-    // /api/Auth/login/
+    // Вход
+    // /api/Auth/login/?login=123&password=123
     public static function login(array $arRequest): array
     {
         global $USER;
 
-        $login    = trim($arRequest['login'] ?? '');
+        $login = trim($arRequest['login'] ?? '');
         $password = (string)($arRequest['password'] ?? '');
 
         if ($login === '' || $password === '') {
@@ -42,10 +23,7 @@ class Auth
         }
 
         $arUser = CUser::GetByID($USER->GetID())->Fetch();
-
-        return [
-            'user' => self::mapUser($arUser),
-        ];
+        return ['user' => UserMapper::map($arUser, true)];
     }
 
     // Выход
@@ -54,10 +32,7 @@ class Auth
     {
         global $USER;
         $USER->Logout();
-
-        return [
-            'success' => true,
-        ];
+        return ['success' => true];
     }
 
     // Получение профиля текущего пользователя
@@ -65,14 +40,9 @@ class Auth
     public static function profile(): array
     {
         global $USER;
+        if (!$USER->IsAuthorized()) throw new \Exception('Пользователь не авторизован');
 
-        if (!$USER->IsAuthorized()) {
-            throw new \Exception('Пользователь не авторизован');
-        }
-
-        $rsUser = CUser::GetByID($USER->GetID());
-        $arUser = $rsUser->Fetch();
-
-        return self::mapUser($arUser);
+        $arUser = CUser::GetByID($USER->GetID())->Fetch();
+        return UserMapper::map($arUser, true);
     }
 }

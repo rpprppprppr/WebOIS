@@ -6,20 +6,6 @@ use Legacy\General\Constants;
 
 class User
 {
-    private static function mapRow(array $arUser): array
-    {
-        $userGroups = CUser::GetUserGroup($arUser['ID']);
-
-        return [
-            'ID'            => $arUser['ID'],
-            'LOGIN'         => $arUser['LOGIN'],
-            'EMAIL'         => $arUser['EMAIL'],
-            'FIRST_NAME'     => $arUser['NAME'] ?? '',
-            'LAST_NAME'      => $arUser['LAST_NAME'] ?? '',
-            'SECOND_NAME'    => $arUser['SECOND_NAME'] ?? '',
-        ];
-    }
-
     private static function getList(array $arRequest = []): array
     {
         $filter = $arRequest['filter'] ?? [];
@@ -31,11 +17,10 @@ class User
 
         $users = [];
         while ($arUser = $rsUsers->Fetch()) {
-            $users[] = self::mapRow($arUser);
+            $users[] = UserMapper::map($arUser);
         }
 
-        $rsTotal = CUser::GetList('ID', 'ASC', $filter);
-        $total = $rsTotal->SelectedRowsCount();
+        $total = CUser::GetList('ID', 'ASC', $filter)->SelectedRowsCount();
 
         return [
             'count' => count($users),
@@ -56,32 +41,25 @@ class User
     public static function getById(array $arRequest): ?array
     {
         $userId = (int)($arRequest['id'] ?? 0);
-        if (!$userId) {
-            throw new \Exception('Не передан ID пользователя');
-        }
+        if (!$userId) throw new \Exception('Не передан ID пользователя');
 
         $rsUser = CUser::GetByID($userId);
         $arUser = $rsUser->Fetch();
 
-        if (!$arUser) {
-            throw new \Exception('Пользователь с таким ID не найден');
-        }
-        return self::mapRow($arUser);
+        return $arUser ? UserMapper::map($arUser) : null;
     }
 
     // Получение преподавателей
     // /api/User/getTeachers/
     public static function getTeachers(array $arRequest = []): array
     {
-        $filter = ['GROUPS_ID' => Constants::GROUP_TEACHERS];
-        return self::getList(array_merge($arRequest, ['filter' => $filter]));
+        return self::getList(array_merge($arRequest, ['filter' => ['GROUPS_ID' => Constants::GROUP_TEACHERS]]));
     }
 
     // Получение студентов
     // /api/User/getStudents/
     public static function getStudents(array $arRequest = []): array
     {
-        $filter = ['GROUPS_ID' => Constants::GROUP_STUDENTS];
-        return self::getList(array_merge($arRequest, ['filter' => $filter]));
+        return self::getList(array_merge($arRequest, ['filter' => ['GROUPS_ID' => Constants::GROUP_STUDENTS]]));
     }
 }
