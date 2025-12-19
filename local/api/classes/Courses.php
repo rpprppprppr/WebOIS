@@ -285,7 +285,7 @@ class Courses
 
         $students[] = $studentId;
         \CIBlockElement::SetPropertyValuesEx($courseId, Constants::IB_COURSES, [
-            Constants::PROP_STUDENTS => $students
+            Constants::COURSE_STUDENTS => $students
         ]);
 
         return ['success' => true, 'message' => 'Студент успешно добавлен в курс'];
@@ -325,7 +325,7 @@ class Courses
         \CIBlockElement::SetPropertyValuesEx(
             $courseId,
             Constants::IB_COURSES,
-            [Constants::PROP_STUDENTS => $students ?: false]
+            [Constants::COURSE_STUDENTS => $students ?: false]
         );
 
         return ['success' => true, 'message' => 'Студент успешно удалён из курса'];

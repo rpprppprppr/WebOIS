@@ -30,7 +30,7 @@ class CoursesTable extends ElementTable
                 ElementPropertyTable::class,
                 [
                     'ref.IBLOCK_ELEMENT_ID' => 'this.ID',
-                    'ref.IBLOCK_PROPERTY_ID' => new SqlExpression('?', Constants::PROP_DESCRIPTION)
+                    'ref.IBLOCK_PROPERTY_ID' => new SqlExpression('?', Constants::COURSE_DESCRIPTION)
                 ]
             )
         );
@@ -43,7 +43,7 @@ class CoursesTable extends ElementTable
                 ElementPropertyTable::class,
                 [
                     'ref.IBLOCK_ELEMENT_ID' => 'this.ID',
-                    'ref.IBLOCK_PROPERTY_ID' => new SqlExpression('?', Constants::PROP_AUTHOR)
+                    'ref.IBLOCK_PROPERTY_ID' => new SqlExpression('?', Constants::COURSE_AUTHOR)
                 ]
             )
         );
@@ -56,7 +56,7 @@ class CoursesTable extends ElementTable
                 ElementPropertyTable::class,
                 [
                     'ref.IBLOCK_ELEMENT_ID' => 'this.ID',
-                    'ref.IBLOCK_PROPERTY_ID' => new SqlExpression('?', Constants::PROP_STUDENTS)
+                    'ref.IBLOCK_PROPERTY_ID' => new SqlExpression('?', Constants::COURSE_STUDENTS)
                 ]
             )
         );
@@ -107,19 +107,19 @@ class CoursesTable extends ElementTable
             \CIBlockElement::SetPropertyValuesEx(
                 $id,
                 Constants::IB_COURSES,
-                [Constants::PROP_AUTHOR => $fields['PROP_AUTHOR']['ID']]
+                [Constants::COURSE_AUTHOR => $fields['PROP_AUTHOR']['ID']]
             );
         }
 
         if (!empty($fields['DESCRIPTION'])) {
             \CIBlockElement::SetPropertyValuesEx($id, Constants::IB_COURSES, [
-                Constants::PROP_DESCRIPTION => $fields['DESCRIPTION']
+                Constants::COURSE_DESCRIPTION => $fields['DESCRIPTION']
             ]);
         }
 
         if (!empty($fields['STUDENT_ID'])) {
             \CIBlockElement::SetPropertyValuesEx($id, Constants::IB_COURSES, [
-                Constants::PROP_STUDENTS => $fields['STUDENT_ID']
+                Constants::COURSE_STUDENTS => $fields['STUDENT_ID']
             ]);
         }
 
