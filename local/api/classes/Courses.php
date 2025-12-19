@@ -1,12 +1,23 @@
 <?php
 namespace Legacy\API;
 
+use CUser;
 use Bitrix\Main\Loader;
 use Legacy\Iblock\CoursesTable;
 use Legacy\General\Constants;
 
 class Courses
 {
+    private static function getUserByIdSafe(int $userId): ?array
+    {
+        if ($userId <= 0) return null;
+
+        $rsUser = CUser::GetByID($userId);
+        $arUser = $rsUser->Fetch();
+
+        return $arUser ? UserMapper::map($arUser) : null;
+    }
+
     private static function mapDescription(?string $description): string
     {
         if (empty($description)) {
@@ -23,10 +34,9 @@ class Courses
 
     private static function mapRow(array $row, bool $fullInfo = false): array
     {
-        // Автор
         $author = null;
         if (!empty($row['AUTHOR_ID'])) {
-            $authorData = User::getById(['id' => (int)$row['AUTHOR_ID']]);
+            $authorData = self::getUserByIdSafe((int)$row['AUTHOR_ID']);
             $author = $fullInfo ? $authorData : [
                 'ID' => $authorData['ID'] ?? 0,
                 'FIRST_NAME' => $authorData['FIRST_NAME'] ?? '',
@@ -35,12 +45,11 @@ class Courses
             ];
         }
 
-        // Студенты (только при полном доступе)
         $students = [];
         if ($fullInfo && !empty($row['STUDENT_ID'])) {
             $studentIds = is_array($row['STUDENT_ID']) ? $row['STUDENT_ID'] : [$row['STUDENT_ID']];
             foreach ($studentIds as $id) {
-                $s = User::getById(['id' => (int)$id]);
+                $s = self::getUserByIdSafe((int)$id);
                 if ($s) {
                     $students[] = $fullInfo ? $s : [
                         'ID' => $s['ID'],
@@ -52,15 +61,20 @@ class Courses
             }
         }
 
-        return [
+        $result = [
             'ID' => $row['ID'],
             'NAME' => $row['NAME'] ?? '',
             'DESCRIPTION' => self::mapDescription($row['DESCRIPTION'] ?? ''),
             'AUTHOR' => $author,
             'MODULES_COUNT' => 0,
-            'STUDENTS' => $fullInfo ? $students : null,
-            'STUDENTS_COUNT' => $fullInfo ? count($students) : null,
         ];
+
+        if ($fullInfo) {
+            $result['STUDENTS'] = $students;
+            $result['STUDENTS_COUNT'] = count($students);
+        }
+
+        return $result;
     }
 
     private static function getList(array $arRequest = [], array $filter = []): array
@@ -110,7 +124,7 @@ class Courses
         } elseif (in_array(Constants::GROUP_STUDENTS, $userGroups)) {
             $filter['STUDENTS_PROP.VALUE'] = $userId;
         } else {
-            $filter['ID'] = 0; // никто не видит
+            $filter['ID'] = 0;
         }
 
         $result = self::getList($arRequest, $filter);
@@ -137,9 +151,7 @@ class Courses
 
         $course = $result['items'][0];
 
-        // Контроль доступа
         if (in_array(Constants::GROUP_ADMINS, $userGroups)) {
-            // Админ видит всё
         } elseif (in_array(Constants::GROUP_TEACHERS, $userGroups)) {
             if ((int)$course['AUTHOR_ID'] !== $userId) {
                 throw new \Exception('Доступ запрещен: это не ваш курс');
@@ -204,23 +216,26 @@ class Courses
         $code = trim($arData['code'] ?? '');
 
         if ($name === '' || $description === '' || $code === '') {
-            throw new \Exception('Обязательные поля: NAME, DESCRIPTION, CODE');
+            throw new \Exception('Обязательные поля: name, description, code');
         }
 
         if (in_array(Constants::GROUP_TEACHERS, $userGroups)) {
             $authorId = $userId;
         } elseif (in_array(Constants::GROUP_ADMINS, $userGroups)) {
-            $authorId = (int)($arData['author_id'] ?? $userId);
+            if (empty($arData['author_id'])) {
+                throw new \Exception('Админ должен указать author_id (ID преподавателя)');
+            }
+            $authorId = (int)$arData['author_id'];
         }
 
         if (!Loader::includeModule('iblock')) throw new \Exception('Не удалось подключить модуль iblock');
 
-        $author = User::getById(['id' => $authorId]);
+        $author = self::getUserByIdSafe($authorId);
         if (!$author) throw new \Exception('Автор не найден');
 
-        $authorGroups = UserMapper::getCurrentUserGroups($author['ID'] ?? 0);
+        $authorGroups = UserMapper::getUserGroups($author['ID'] ?? 0);
         if (!in_array(Constants::GROUP_TEACHERS, $authorGroups)) {
-            throw new \Exception('Нельзя указать автора, который не является преподавателем');
+            throw new \Exception('Автор должен быть преподавателем');
         }
 
         $fields = [
@@ -228,15 +243,12 @@ class Courses
             'DESCRIPTION' => self::mapDescription($description),
             'CODE' => $code,
             'PROP_AUTHOR' => $author,
-            'STUDENT_ID' => [],
         ];
 
         $id = CoursesTable::addCourse($fields);
         if (!$id) throw new \Exception('Не удалось создать курс');
 
-        $course = self::getById(['id' => $id])[0];
-
-        return $course;
+        return ['success' => true, 'message' => 'Курс успешно создан'];
     }
 
     // Добавление студента в курс
@@ -262,7 +274,7 @@ class Courses
             throw new \Exception('Доступ запрещен: это не ваш курс');
         }
 
-        $student = User::getById(['id' => $studentId]);
+        $student = self::getUserByIdSafe($studentId);
         if (!$student) throw new \Exception('Студент не найден');
 
         $students = $course['STUDENTS'] ? array_column($course['STUDENTS'], 'ID') : [];
@@ -276,7 +288,7 @@ class Courses
             Constants::PROP_STUDENTS => $students
         ]);
 
-        return self::getById(['id' => $courseId])[0];
+        return ['success' => true, 'message' => 'Студент успешно добавлен в курс'];
     }
 
     // Удаление студента из курса
@@ -316,12 +328,12 @@ class Courses
             [Constants::PROP_STUDENTS => $students ?: false]
         );
 
-        return self::getById(['id' => $courseId])[0];
+        return ['success' => true, 'message' => 'Студент успешно удалён из курса'];
     }
 
     // Удаление курса
     // /api/Courses/delete/?id=1
-    public static function delete(array $arData): bool
+    public static function delete(array $arData): array
     {
         $courseId = (int)($arData['id'] ?? 0);
         if (!$courseId) {
@@ -353,6 +365,6 @@ class Courses
             throw new \Exception('Не удалось удалить курс');
         }
 
-        return true;
+        return ['success' => true, 'message' => 'Курс успешно удалён'];
     }
 }
