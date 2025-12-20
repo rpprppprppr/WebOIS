@@ -92,6 +92,20 @@ class ModulesTable extends ElementTable
             )
         );
         $query->addSelect('COURSE_PROP.VALUE', 'COURSE_ID');
+
+        $query->registerRuntimeField(
+            'FILES_PROP',
+            new ReferenceField(
+                'FILES_PROP',
+                ElementPropertyTable::class,
+                [
+                    'ref.IBLOCK_ELEMENT_ID' => 'this.ID',
+                    'ref.IBLOCK_PROPERTY_ID' => new SqlExpression('?', Constants::MODULE_FILE),
+                ]
+            )
+        );
+
+        $query->addSelect('FILES_PROP.VALUE', 'FILE_ID');
     }
 
     public static function withFilter(Query $query, array $filter = [])

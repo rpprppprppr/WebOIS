@@ -9,6 +9,46 @@ use Legacy\General\Constants;
 
 class Modules
 {
+    private static function resolveModuleType($type): int
+    {
+        if (is_numeric($type)) {
+            return (int)$type;
+        }
+
+        if (!\CModule::IncludeModule('iblock')) {
+            throw new \Exception('Модуль iblock не подключен');
+        }
+
+        $type = trim((string)$type);
+
+        $res = PropertyEnumerationTable::getList([
+            'filter' => [
+                'PROPERTY_ID' => Constants::MODULE_TYPE,
+                '=XML_ID' => $type,
+            ],
+            'select' => ['ID']
+        ]);
+
+        if ($row = $res->fetch()) {
+            return (int)$row['ID'];
+        }
+
+        $res = PropertyEnumerationTable::getList([
+            'filter' => [
+                'PROPERTY_ID' => Constants::MODULE_TYPE,
+            ],
+            'select' => ['ID', 'VALUE']
+        ]);
+
+        while ($row = $res->fetch()) {
+            if (mb_strtolower($row['VALUE']) === mb_strtolower($type)) {
+                return (int)$row['ID'];
+            }
+        }
+
+        throw new \Exception("Тип модуля '{$type}' не найден");
+    }
+
     private static function mapDescription(?string $description): string
     {
         if (empty($description)) {
@@ -54,16 +94,48 @@ class Modules
         ModulesTable::withPage($query, $limit, $page);
 
         $modules = [];
+        $typeIds = [];
+
         $db = $query->exec();
-        $typeIds = []; // Собираем ID типов
         while ($row = $db->fetch()) {
-            $modules[] = $row;
+            $id = (int)$row['ID'];
+
+            if (!isset($modules[$id])) {
+                $modules[$id] = $row;
+                $modules[$id]['FILES'] = [];
+            }
+
+            if (!empty($row['FILE_ID'])) {
+                $modules[$id]['FILES'][] = (int)$row['FILE_ID'];
+            }
+
             if (!empty($row['TYPE'])) {
-                $typeIds[] = $row['TYPE'];
+                $typeIds[$row['TYPE']] = $row['TYPE'];
             }
         }
 
-        // Получаем соответствие ID -> VALUE
+        $fileIds = [];
+
+        foreach ($modules as $module) {
+            foreach ($module['FILES'] as $fid) {
+                $fileIds[$fid] = $fid;
+            }
+        }
+
+        $baseUrl = 'http://192.168.0.143';
+
+        $fileMap = [];
+        if ($fileIds) {
+            $res = \CFile::GetList([], ['@ID' => implode(',', $fileIds)]);
+            while ($file = $res->Fetch()) {
+                $fileMap[$file['ID']] = [
+                    'ID' => (int)$file['ID'],
+                    'NAME' => $file['ORIGINAL_NAME'],
+                    'URL' => $baseUrl . \CFile::GetPath($file['ID']),
+                ];
+            }
+        }
+
         $typeMap = [];
         if ($typeIds) {
             $res = PropertyEnumerationTable::getList([
@@ -75,13 +147,23 @@ class Modules
             }
         }
 
-        // Преобразуем ID в VALUE и маппируем строки через mapRow
         $modulesMapped = [];
+
         foreach ($modules as $row) {
             if (!empty($row['TYPE']) && isset($typeMap[$row['TYPE']])) {
                 $row['TYPE'] = $typeMap[$row['TYPE']];
             }
-            $modulesMapped[] = self::mapRow($row);
+
+            $mapped = self::mapRow($row);
+
+            $mapped['FILES'] = [];
+            foreach ($row['FILES'] as $fid) {
+                if (isset($fileMap[$fid])) {
+                    $mapped['FILES'][] = $fileMap[$fid];
+                }
+            }
+
+            $modulesMapped[] = $mapped;
         }
 
         return [
@@ -92,7 +174,7 @@ class Modules
 
     // Получение всех модулей по курсу
     // /api/Modules/getByCourse/?id=
-    public static function getByCourse(array $arRequest): array
+    public static function getByCourse(array $arRequest): void
     {
         $courseId = (int)($arRequest['course_id'] ?? $_GET['course_id'] ?? 0);
         if (!$courseId) throw new \Exception('Не указан ID курса');
@@ -117,7 +199,13 @@ class Modules
         }
 
         $result = self::getList(['COURSE_PROP.VALUE' => $courseId]);
-        return $result;
+
+        header('Content-Type: application/json; charset=utf-8');
+        echo json_encode([
+            'status' => 'ok',
+            'result' => $result
+        ], JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        exit;
     }
 
     // Добавление модуля
@@ -131,10 +219,9 @@ class Modules
 
         $role = self::getUserRole();
         if (!in_array($role, ['admin', 'teacher'])) {
-            throw new \Exception('Доступ запрещен: только админ или преподаватель');
+            throw new \Exception('Доступ запрещен');
         }
 
-        // Проверяем обязательные поля
         $required = ['name', 'type', 'max_score', 'deadline', 'course_id'];
         foreach ($required as $f) {
             if (empty($arData[$f])) {
@@ -142,43 +229,22 @@ class Modules
             }
         }
 
-        // Приводим к внутреннему формату
         $fields = [
             'NAME' => $arData['name'],
             'DESCRIPTION' => $arData['description'] ?? '',
-            'TYPE' => $arData['type'],
+            'TYPE' => self::resolveModuleType($arData['type']), // ✅
             'MAX_SCORE' => (int)$arData['max_score'],
             'DEADLINE' => $arData['deadline'],
             'COURSE_ID' => (int)$arData['course_id'],
             'FILES' => $arData['files'] ?? null,
         ];
 
-        // Проверка прав преподавателя на курс
         if ($role === 'teacher') {
             $course = CoursesTable::getCourseById($fields['COURSE_ID']);
-            if (!$course || (int)$course['AUTHOR_ID'] !== $userId) {
-                throw new \Exception('Доступ запрещен: нельзя добавить модуль в чужой курс');
+            if ((int)$course['AUTHOR_ID'] !== $userId) {
+                throw new \Exception('Нельзя добавить модуль в чужой курс');
             }
         }
-
-        // TYPE: поддержка строкового значения
-        $typeValue = $fields['TYPE'];
-        $typeId = 0;
-        if (is_numeric($typeValue)) {
-            $typeId = (int)$typeValue;
-        } else {
-            $res = \Bitrix\Iblock\PropertyEnumerationTable::getList([
-                'filter' => ['VALUE' => $typeValue],
-                'select' => ['ID']
-            ]);
-            if ($row = $res->fetch()) {
-                $typeId = (int)$row['ID'];
-            }
-        }
-        if (!$typeId) {
-            throw new \Exception("Тип модуля '{$typeValue}' не найден");
-        }
-        $fields['TYPE'] = $typeId;
 
         $id = ModulesTable::addModule($fields);
 
@@ -205,52 +271,33 @@ class Modules
 
         $role = self::getUserRole();
         if (!in_array($role, ['admin', 'teacher'])) {
-            throw new \Exception('Доступ запрещен: только админ или преподаватель');
+            throw new \Exception('Доступ запрещен');
         }
 
-        // Проверка прав преподавателя на курс модуля
         if ($role === 'teacher') {
             $module = ModulesTable::getModuleById($moduleId);
-            if (!$module) {
-                throw new \Exception('Модуль не найден');
-            }
-
             $course = CoursesTable::getCourseById((int)$module['COURSE_ID']);
             if ((int)$course['AUTHOR_ID'] !== $userId) {
-                throw new \Exception('Доступ запрещен: нельзя редактировать чужой модуль');
+                throw new \Exception('Нельзя редактировать чужой модуль');
             }
         }
 
-        // Приводим к внутреннему формату
-        $fields = [
-            'NAME' => $arData['name'] ?? null,
-            'DESCRIPTION' => $arData['description'] ?? null,
-            'TYPE' => $arData['type'] ?? null,
-            'MAX_SCORE' => isset($arData['max_score']) ? (int)$arData['max_score'] : null,
-            'DEADLINE' => $arData['deadline'] ?? null,
-            'COURSE_ID' => isset($arData['course_id']) ? (int)$arData['course_id'] : null,
-            'FILES' => $arData['files'] ?? null,
-        ];
+        $fields = [];
 
-        // TYPE: поддержка строки или ID
-        if ($fields['TYPE'] !== null) {
-            $typeValue = $fields['TYPE'];
-            $typeId = 0;
-            if (is_numeric($typeValue)) {
-                $typeId = (int)$typeValue;
-            } else {
-                $res = \Bitrix\Iblock\PropertyEnumerationTable::getList([
-                    'filter' => ['VALUE' => $typeValue],
-                    'select' => ['ID']
-                ]);
-                if ($row = $res->fetch()) {
-                    $typeId = (int)$row['ID'];
-                }
-            }
-            if (!$typeId) {
-                throw new \Exception("Тип модуля '{$typeValue}' не найден");
-            }
-            $fields['TYPE'] = $typeId;
+        if (isset($arData['name'])) {
+            $fields['NAME'] = $arData['name'];
+        }
+        if (array_key_exists('description', $arData)) {
+            $fields['DESCRIPTION'] = $arData['description'];
+        }
+        if (array_key_exists('type', $arData)) {
+            $fields['TYPE'] = self::resolveModuleType($arData['type']); // ✅
+        }
+        if (array_key_exists('max_score', $arData)) {
+            $fields['MAX_SCORE'] = (int)$arData['max_score'];
+        }
+        if (array_key_exists('deadline', $arData)) {
+            $fields['DEADLINE'] = $arData['deadline'] ?: false;
         }
 
         ModulesTable::updateModule($moduleId, $fields);
