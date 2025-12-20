@@ -1,6 +1,12 @@
 <?php
 namespace Legacy\Iblock;
 
+use Bitrix\Main\Loader;
+
+if (!Loader::includeModule('iblock')) {
+    throw new \Exception('Модуль iblock не подключён');
+}
+
 use Bitrix\Iblock\ElementTable;
 use Bitrix\Iblock\ElementPropertyTable;
 
@@ -16,8 +22,7 @@ class CoursesTable extends ElementTable
     {
         $query->setSelect([
             'ID',
-            'NAME',
-            'CODE',
+            'NAME'
         ]);
     }
 
@@ -92,7 +97,6 @@ class CoursesTable extends ElementTable
         $arFields = [
             'IBLOCK_ID' => Constants::IB_COURSES,
             'NAME' => $fields['NAME'] ?? '',
-            'CODE' => $fields['CODE'] ?? '',
             'ACTIVE' => 'Y',
         ];
 
@@ -103,11 +107,11 @@ class CoursesTable extends ElementTable
             throw new \Exception('Не удалось создать элемент курса: ' . $el->LAST_ERROR);
         }
 
-        if (!empty($fields['PROP_AUTHOR']['ID'])) {
+        if (!empty($fields['AUTHOR_PROP']['ID'])) {
             \CIBlockElement::SetPropertyValuesEx(
                 $id,
                 Constants::IB_COURSES,
-                [Constants::COURSE_AUTHOR => $fields['PROP_AUTHOR']['ID']]
+                [Constants::COURSE_AUTHOR => $fields['AUTHOR_PROP']['ID']]
             );
         }
 
@@ -124,5 +128,19 @@ class CoursesTable extends ElementTable
         }
 
         return (int)$id;
+    }
+
+    public static function getCourseById(int $courseId): ?array
+    {
+        if ($courseId <= 0) {
+            return null;
+        }
+
+        $query = self::query();
+        self::withSelect($query);
+        self::withRuntimeProperties($query);
+        self::withFilter($query, ['ID' => $courseId]);
+
+        return $query->exec()->fetch() ?: null;
     }
 }

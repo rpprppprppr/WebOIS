@@ -2,7 +2,6 @@
 namespace Legacy\API;
 
 use CUser;
-use Bitrix\Main\Loader;
 use Legacy\Iblock\CoursesTable;
 use Legacy\General\Constants;
 
@@ -32,7 +31,7 @@ class Courses
         return $description;
     }
 
-    private static function mapRow(array $row, bool $fullInfo = false): array
+    private static function mapRow(array $row, bool $fullInfo = false, bool $withModules = true): array
     {
         $author = null;
         if (!empty($row['AUTHOR_ID'])) {
@@ -46,7 +45,7 @@ class Courses
         }
 
         $students = [];
-        if ($fullInfo && !empty($row['STUDENT_ID'])) {
+        if (!empty($row['STUDENT_ID'])) {
             $studentIds = is_array($row['STUDENT_ID']) ? $row['STUDENT_ID'] : [$row['STUDENT_ID']];
             foreach ($studentIds as $id) {
                 $s = self::getUserByIdSafe((int)$id);
@@ -55,9 +54,17 @@ class Courses
                         'ID' => $s['ID'],
                         'FIRST_NAME' => $s['FIRST_NAME'],
                         'LAST_NAME' => $s['LAST_NAME'],
-                        'SECOND_NAME' => $s['SECOND_NAME']
+                        'SECOND_NAME' => $s['SECOND_NAME'],
                     ];
                 }
+            }
+        }
+
+        $modules = [];
+        if ($withModules) {
+            $modulesData = Modules::getByCourse(['course_id' => $row['ID']]);
+            if (!empty($modulesData['items'])) {
+                $modules = $modulesData['items'];
             }
         }
 
@@ -66,12 +73,16 @@ class Courses
             'NAME' => $row['NAME'] ?? '',
             'DESCRIPTION' => self::mapDescription($row['DESCRIPTION'] ?? ''),
             'AUTHOR' => $author,
-            'MODULES_COUNT' => 0,
+            'MODULES_COUNT' => count($modules),
+            'STUDENTS_COUNT' => count($students),
         ];
 
+
         if ($fullInfo) {
+            if ($withModules) {
+                $result['MODULES'] = $modules;
+            }
             $result['STUDENTS'] = $students;
-            $result['STUDENTS_COUNT'] = count($students);
         }
 
         return $result;
@@ -79,10 +90,6 @@ class Courses
 
     private static function getList(array $arRequest = [], array $filter = []): array
     {
-        if (!Loader::includeModule('iblock')) {
-            throw new \Exception('Не удалось подключить модуль iblock');
-        }
-
         $limit = (int)($arRequest['limit'] ?? 20);
         $page = (int)($arRequest['page'] ?? 1);
 
@@ -128,7 +135,7 @@ class Courses
         }
 
         $result = self::getList($arRequest, $filter);
-        $result['items'] = array_map(fn($row) => self::mapRow($row, $fullInfo), $result['items']);
+        $result['items'] = array_map(fn($row) => self::mapRow($row, false), $result['items']);
 
         return $result;
     }
@@ -173,17 +180,17 @@ class Courses
     // /api/Courses/getByTeacher/?id=
     public static function getByTeacher(array $arRequest): array
     {
-        return self::getByRole($arRequest, 'AUTHOR_PROP.VALUE');
+        return self::getByRole($arRequest, 'AUTHOR_PROP.VALUE', false);
     }
 
     // Получение курсов по студенту (ADMIN)
     // /api/Courses/getByStudent/?id=
     public static function getByStudent(array $arRequest): array
     {
-        return self::getByRole($arRequest, 'STUDENTS_PROP.VALUE');
+        return self::getByRole($arRequest, 'STUDENTS_PROP.VALUE', true);
     }
 
-    private static function getByRole(array $arRequest, string $roleProp): array
+    private static function getByRole(array $arRequest, string $roleProp, bool $fullInfo): array
     {
         $userGroups = UserMapper::getCurrentUserGroups();
         if (!in_array(Constants::GROUP_ADMINS, $userGroups)) {
@@ -194,13 +201,15 @@ class Courses
         if (!$id) throw new \Exception("Не указан ID для роли {$roleProp}");
 
         $result = self::getList($arRequest, [$roleProp => $id]);
-        $result['items'] = array_map(fn($row) => self::mapRow($row, true), $result['items']);
+        $withStudents= $roleProp !== 'STUDENTS_PROP.VALUE';
+
+        $result['items'] = array_map(fn($row) => self::mapRow($row, $fullInfo, $withStudents), $result['items']);
 
         return $result;
     }
 
     // Добавление курса
-    // /api/Courses/add/?name=1&description=1&code=1
+    // /api/Courses/add/
     public static function add(array $arData): array
     {
         $userId = UserMapper::getCurrentUserId();
@@ -213,10 +222,9 @@ class Courses
 
         $name = trim($arData['name'] ?? '');
         $description = $arData['description'] ?? '';
-        $code = trim($arData['code'] ?? '');
 
-        if ($name === '' || $description === '' || $code === '') {
-            throw new \Exception('Обязательные поля: name, description, code');
+        if ($name === '' || $description === '') {
+            throw new \Exception('Обязательные поля: name, description');
         }
 
         if (in_array(Constants::GROUP_TEACHERS, $userGroups)) {
@@ -227,8 +235,6 @@ class Courses
             }
             $authorId = (int)$arData['author_id'];
         }
-
-        if (!Loader::includeModule('iblock')) throw new \Exception('Не удалось подключить модуль iblock');
 
         $author = self::getUserByIdSafe($authorId);
         if (!$author) throw new \Exception('Автор не найден');
@@ -241,14 +247,17 @@ class Courses
         $fields = [
             'NAME' => $name,
             'DESCRIPTION' => self::mapDescription($description),
-            'CODE' => $code,
-            'PROP_AUTHOR' => $author,
+            'AUTHOR_PROP' => $author,
         ];
 
         $id = CoursesTable::addCourse($fields);
         if (!$id) throw new \Exception('Не удалось создать курс');
 
-        return ['success' => true, 'message' => 'Курс успешно создан'];
+        return [
+            'success' => true,
+            'ID' => $id,
+            'message' => 'Курс успешно создан'
+        ];
     }
 
     // Добавление студента в курс
