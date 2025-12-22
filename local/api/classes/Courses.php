@@ -5,7 +5,9 @@ use CUser;
 
 use Legacy\API\Access\UserAccess;
 use Legacy\API\Access\CourseAccess;
+
 use Legacy\General\Constants;
+
 use Legacy\Iblock\CoursesTable;
 
 class Courses
@@ -16,11 +18,10 @@ class Courses
         if (empty($result['items'])) {
             throw new \Exception('Курс не найден');
         }
-
         return ['course' => $result['items'][0]];
     }
 
-    private static function mapRow(array $row, bool $fullInfo = false, bool $withModules = true): array
+    private static function mapCourseRow(array $row, bool $fullInfo = false, bool $withModules = true): array
     {
         $author = !empty($row['AUTHOR_ID'])
             ? UserAccess::getUserById((int)$row['AUTHOR_ID'], $fullInfo)
@@ -41,17 +42,12 @@ class Courses
             $modules = $modulesData['items'] ?? [];
         }
 
-        return Mappers::mapCourse(
-            [
-                'ID' => $row['ID'],
-                'NAME' => $row['NAME'] ?? '',
-                'DESCRIPTION' => $row['DESCRIPTION'] ?? '',
-                'AUTHOR' => $author,
-            ],
-            $fullInfo,
-            $modules,
-            $students
-        );
+        return Mappers::mapCourse([
+            'ID' => $row['ID'],
+            'NAME' => $row['NAME'] ?? '',
+            'DESCRIPTION' => $row['DESCRIPTION'] ?? '',
+            'AUTHOR' => $author,
+        ], $fullInfo, $modules, $students);
     }
 
     private static function getList(array $arRequest = [], array $filter = []): array
@@ -89,14 +85,11 @@ class Courses
             'admin'   => [],
             'teacher' => ['AUTHOR_PROP.VALUE' => $userId],
             'student' => ['STUDENTS_PROP.VALUE' => $userId],
-            default   => throw new \Exception('Доступ запрещён'),
+            default   => throw new \Exception('Доступ запрещен'),
         };
 
         $result = self::getList($arRequest, $filter);
-        $result['items'] = array_map(
-            fn($row) => self::mapRow($row),
-            $result['items']
-        );
+        $result['items'] = array_map(fn($row) => self::mapCourseRow($row), $result['items']);
 
         return $result;
     }
@@ -106,18 +99,11 @@ class Courses
     public static function getById(array $arRequest): array
     {
         $courseId = (int)($arRequest['id'] ?? 0);
-        if (!$courseId) {
-            throw new \Exception('Не передан ID курса');
-        }
+        if (!$courseId) throw new \Exception('Не передан ID курса');
 
         $access = CourseAccess::getCourseForView($courseId);
 
-        return [
-            self::mapRow(
-                $access['course'],
-                $access['fullInfo']
-            )
-        ];
+        return [self::mapCourseRow($access['course'], $access['fullInfo'])];
     }
 
     // Получение курсов по преподавателю (ADMIN)
@@ -144,7 +130,7 @@ class Courses
         $withModules = $prop !== 'STUDENTS_PROP.VALUE';
         $result = self::getList($arRequest, [$prop => $id]);
         $result['items'] = array_map(
-            fn($row) => self::mapRow($row, $fullInfo, $withModules),
+            fn($row) => self::mapCourseRow($row, $fullInfo, $withModules),
             $result['items']
         );
 
@@ -237,7 +223,7 @@ class Courses
                 throw new \Exception('Студента нет в курсе');
             }
             $students = array_values(array_filter($students, fn($id) => $id != $studentId));
-            $message = 'Студент успешно удалён из курса';
+            $message = 'Студент успешно удален из курса';
         } else {
             throw new \Exception('Неверное действие');
         }
@@ -269,6 +255,6 @@ class Courses
             throw new \Exception('Не удалось удалить курс');
         }
 
-        return ['success' => true, 'message' => 'Курс успешно удалён'];
+        return ['success' => true, 'message' => 'Курс успешно удален'];
     }
 }

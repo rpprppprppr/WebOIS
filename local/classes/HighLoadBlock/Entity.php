@@ -23,7 +23,7 @@ class Entity
     private function __construct()
     {
         if (!Loader::includeModule('highloadblock')) {
-            throw new \Exception('Highloadblock is not found');
+            throw new \Exception('Highloadblock не найден');
         }
     }
 

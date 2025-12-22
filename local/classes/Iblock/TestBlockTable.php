@@ -13,7 +13,7 @@ use Legacy\General\Constants;
 
 class TestBlockTable extends ElementTable
 {
-    public static function withSelect(Query $query)
+    public static function withSelect(Query $query): void
     {
         $query->setSelect([
             'ID',
@@ -28,7 +28,7 @@ class TestBlockTable extends ElementTable
         ]);
     }
 
-    public static function withRuntimeProperties(Query $query)
+    public static function withRuntimeProperties(Query $query): void
     {
         $query->registerRuntimeField(
             'PROPERTY',
@@ -45,7 +45,7 @@ class TestBlockTable extends ElementTable
         $query->addSelect('PROPERTY.VALUE', 'PROPERTY_VALUE');
     }
 
-    public static function withPage(Query $query, $limit, $page)
+    public static function withPage(Query $query, $limit, $page): void
     {
         $query->setLimit($limit);
         $query->setOffset(($page - 1) * $limit);

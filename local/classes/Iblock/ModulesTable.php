@@ -18,7 +18,7 @@ use Legacy\General\Constants;
 
 class ModulesTable extends ElementTable
 {
-    public static function withSelect(Query $query)
+    public static function withSelect(Query $query): void
     {
         $query->setSelect([
             'ID',
@@ -26,7 +26,7 @@ class ModulesTable extends ElementTable
         ]);
     }
 
-    public static function withRuntimeProperties(Query $query)
+    public static function withRuntimeProperties(Query $query): void
     {
         $query->registerRuntimeField(
             'DESCRIPTION_PROP',
@@ -108,19 +108,19 @@ class ModulesTable extends ElementTable
         $query->addSelect('FILES_PROP.VALUE', 'FILE_ID');
     }
 
-    public static function withFilter(Query $query, array $filter = [])
+    public static function withFilter(Query $query, array $filter = []): void
     {
         $defaultFilter = ['ACTIVE' => 'Y', 'IBLOCK_ID' => Constants::IB_MODULES];
         $query->setFilter(array_merge($defaultFilter, $filter));
     }
 
-    public static function withOrder(Query $query, array $order = [])
+    public static function withOrder(Query $query, array $order = []): void
     {
         if (empty($order)) $order = ['ID' => 'ASC'];
         $query->setOrder($order);
     }
 
-    public static function withPage(Query $query, int $limit = 50, int $page = 1)
+    public static function withPage(Query $query, int $limit = 50, int $page = 1): void
     {
         $query->setLimit($limit);
         $query->setOffset(($page - 1) * $limit);

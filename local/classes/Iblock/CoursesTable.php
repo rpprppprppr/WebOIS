@@ -4,7 +4,7 @@ namespace Legacy\Iblock;
 use Bitrix\Main\Loader;
 
 if (!Loader::includeModule('iblock')) {
-    throw new \Exception('Модуль iblock не подключён');
+    throw new \Exception('Модуль iblock не подключен');
 }
 
 use Bitrix\Iblock\ElementTable;

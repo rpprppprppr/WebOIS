@@ -8,7 +8,16 @@ use Legacy\General\Constants;
 
 class Mappers
 {
-    private static string $baseUrl = 'http://192.168.0.143';
+    public static string $baseUrl = 'http://192.168.0.143';
+
+    public static function formatDateRus(?string $dateTime): ?string
+    {
+        if (empty($dateTime)) return null;
+        $timestamp = strtotime($dateTime);
+        if (!$timestamp) return $dateTime;
+        return date('d.m.Y H:i:s', $timestamp);
+    }
+
 
     public static function mapUser(array $arUser, bool $full = false): array
     {
@@ -63,19 +72,26 @@ class Mappers
         return $result;
     }
 
-    public static function mapModule(array $row, array $files = []): array
+    public static function mapModule(array $row, array $fileIds = []): array
     {
-        $mapped = [
+        $files = self::mapFiles($fileIds);
+
+        $deadline = $row['DEADLINE'] ?? null;
+        if (!empty($deadline) && $deadline !== 'Бессрочно') {
+            $deadline = self::formatDateRus($deadline);
+        } else {
+            $deadline = 'Бессрочно';
+        }
+
+        return [
             'ID' => $row['ID'],
             'NAME' => $row['NAME'] ?? '',
             'DESCRIPTION' => self::mapDescription($row['DESCRIPTION'] ?? ''),
             'TYPE' => $row['TYPE'] ?? '',
             'MAX_SCORE' => (int)($row['MAX_SCORE'] ?? 0),
-            'DEADLINE' => !empty($row['DEADLINE']) ? $row['DEADLINE'] : 'Бессрочно',
+            'DEADLINE' => $deadline,
             'FILES' => $files
         ];
-
-        return $mapped;
     }
 
     public static function mapSubmission(array $row): array
@@ -121,12 +137,12 @@ class Mappers
     {
         $files = [];
         foreach ($fileIds as $fid) {
-            $file = CFile::GetFileArray($fid);
+            $file = \CFile::GetFileArray($fid);
             if ($file) {
                 $files[] = [
                     'ID' => (int)$file['ID'],
                     'NAME' => $file['ORIGINAL_NAME'],
-                    'URL' => Mappers::$baseUrl . CFile::GetPath($file['ID']),
+                    'URL' => Mappers::$baseUrl . \CFile::GetPath($file['ID']),
                 ];
             }
         }

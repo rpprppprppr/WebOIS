@@ -2,6 +2,7 @@
 namespace Legacy\API\Access;
 
 use Legacy\API\Courses;
+
 class CourseAccess
 {
     public static function getCourseForView(int $courseId): array
@@ -12,14 +13,26 @@ class CourseAccess
         $result = Courses::getRawById($courseId);
         $course = $result['course'];
 
-        $studentIds = (array)($course['STUDENT_ID'] ?? []);
+        $studentIds = [];
+        if (!empty($course['STUDENT_ID'])) {
+            if (isset($course['STUDENT_ID']['VALUE']) && is_array($course['STUDENT_ID']['VALUE'])) {
+                $studentIds = $course['STUDENT_ID']['VALUE'];
+            } elseif (is_array($course['STUDENT_ID'])) {
+                $studentIds = $course['STUDENT_ID'];
+            } elseif (is_string($course['STUDENT_ID'])) {
+                $studentIds = array_filter(explode(',', $course['STUDENT_ID']));
+            }
+            $studentIds = array_map('intval', $studentIds);
+        }
 
         $fullInfo = match ($role) {
             'admin'   => true,
             'teacher' => ((int)$course['AUTHOR_ID'] === $userId)
-                ?: throw new \Exception('Доступ запрещен: это не ваш курс'),
+                ? true
+                : throw new \Exception('Доступ запрещен: это не ваш курс'),
             'student' => in_array($userId, $studentIds, true)
-                ?: throw new \Exception('Доступ запрещён: вы не записаны на этот курс'),
+                ? true
+                : throw new \Exception('Доступ запрещен: вы не записаны на этот курс'),
             default   => throw new \Exception('Доступ запрещен'),
         };
 
@@ -52,7 +65,7 @@ class CourseAccess
         UserAccess::checkAuth();
 
         if (UserAccess::getUserRole() === 'student') {
-            throw new \Exception('Доступ запрещён');
+            throw new \Exception('Доступ запрещен: необходима роль админа или преподавателя');
         }
     }
 }
