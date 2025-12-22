@@ -2,60 +2,35 @@
 namespace Legacy\API;
 
 use CUser;
-use Legacy\Iblock\CoursesTable;
+
+use Legacy\API\Access\UserAccess;
+use Legacy\API\Access\CourseAccess;
 use Legacy\General\Constants;
+use Legacy\Iblock\CoursesTable;
 
 class Courses
 {
-    private static function getUserByIdSafe(int $userId): ?array
+    public static function getRawById(int $courseId): array
     {
-        if ($userId <= 0) return null;
-
-        $rsUser = CUser::GetByID($userId);
-        $arUser = $rsUser->Fetch();
-
-        return $arUser ? UserMapper::map($arUser) : null;
-    }
-
-    private static function mapDescription(?string $description): string
-    {
-        if (empty($description)) {
-            return '';
+        $result = self::getList([], ['ID' => $courseId]);
+        if (empty($result['items'])) {
+            throw new \Exception('Курс не найден');
         }
 
-        $data = @unserialize($description);
-        if ($data !== false && isset($data['TEXT'])) {
-            return $data['TEXT'];
-        }
-
-        return $description;
+        return ['course' => $result['items'][0]];
     }
 
     private static function mapRow(array $row, bool $fullInfo = false, bool $withModules = true): array
     {
-        $author = null;
-        if (!empty($row['AUTHOR_ID'])) {
-            $authorData = self::getUserByIdSafe((int)$row['AUTHOR_ID']);
-            $author = $fullInfo ? $authorData : [
-                'ID' => $authorData['ID'] ?? 0,
-                'FIRST_NAME' => $authorData['FIRST_NAME'] ?? '',
-                'LAST_NAME' => $authorData['LAST_NAME'] ?? '',
-                'SECOND_NAME' => $authorData['SECOND_NAME'] ?? '',
-            ];
-        }
+        $author = !empty($row['AUTHOR_ID'])
+            ? UserAccess::getUserById((int)$row['AUTHOR_ID'], $fullInfo)
+            : null;
 
         $students = [];
         if (!empty($row['STUDENT_ID'])) {
-            $studentIds = is_array($row['STUDENT_ID']) ? $row['STUDENT_ID'] : [$row['STUDENT_ID']];
-            foreach ($studentIds as $id) {
-                $s = self::getUserByIdSafe((int)$id);
-                if ($s) {
-                    $students[] = $fullInfo ? $s : [
-                        'ID' => $s['ID'],
-                        'FIRST_NAME' => $s['FIRST_NAME'],
-                        'LAST_NAME' => $s['LAST_NAME'],
-                        'SECOND_NAME' => $s['SECOND_NAME'],
-                    ];
+            foreach ((array)$row['STUDENT_ID'] as $id) {
+                if ($user = UserAccess::getUserById((int)$id)) {
+                    $students[] = $user;
                 }
             }
         }
@@ -63,35 +38,26 @@ class Courses
         $modules = [];
         if ($withModules) {
             $modulesData = Modules::getByCourse(['course_id' => $row['ID']]);
-            if (!empty($modulesData['items'])) {
-                $modules = $modulesData['items'];
-            }
+            $modules = $modulesData['items'] ?? [];
         }
 
-        $result = [
-            'ID' => $row['ID'],
-            'NAME' => $row['NAME'] ?? '',
-            'DESCRIPTION' => self::mapDescription($row['DESCRIPTION'] ?? ''),
-            'AUTHOR' => $author,
-            'MODULES_COUNT' => count($modules),
-            'STUDENTS_COUNT' => count($students),
-        ];
-
-
-        if ($fullInfo) {
-            if ($withModules) {
-                $result['MODULES'] = $modules;
-            }
-            $result['STUDENTS'] = $students;
-        }
-
-        return $result;
+        return Mappers::mapCourse(
+            [
+                'ID' => $row['ID'],
+                'NAME' => $row['NAME'] ?? '',
+                'DESCRIPTION' => $row['DESCRIPTION'] ?? '',
+                'AUTHOR' => $author,
+            ],
+            $fullInfo,
+            $modules,
+            $students
+        );
     }
 
     private static function getList(array $arRequest = [], array $filter = []): array
     {
         $limit = (int)($arRequest['limit'] ?? 20);
-        $page = (int)($arRequest['page'] ?? 1);
+        $page  = (int)($arRequest['page'] ?? 1);
 
         $query = CoursesTable::query();
         CoursesTable::withSelect($query);
@@ -100,15 +66,15 @@ class Courses
         CoursesTable::withOrder($query);
         CoursesTable::withPage($query, $limit, $page);
 
-        $courses = [];
+        $items = [];
         $db = $query->exec();
         while ($row = $db->fetch()) {
-            $courses[] = $row;
+            $items[] = $row;
         }
 
         return [
-            'count' => count($courses),
-            'items' => $courses
+            'count' => count($items),
+            'items' => $items,
         ];
     }
 
@@ -116,64 +82,42 @@ class Courses
     // /api/Courses/get/
     public static function get(array $arRequest = []): array
     {
-        $userId = UserMapper::getCurrentUserId();
-        if (!$userId) throw new \Exception('Неавторизованный пользователь');
+        $userId = UserAccess::checkAuth();
+        $role = UserAccess::getUserRole();
 
-        $userGroups = UserMapper::getCurrentUserGroups();
-        $filter = [];
-        $fullInfo = false;
-
-        if (in_array(Constants::GROUP_ADMINS, $userGroups)) {
-            $fullInfo = true;
-        } elseif (in_array(Constants::GROUP_TEACHERS, $userGroups)) {
-            $filter['AUTHOR_PROP.VALUE'] = $userId;
-            $fullInfo = true;
-        } elseif (in_array(Constants::GROUP_STUDENTS, $userGroups)) {
-            $filter['STUDENTS_PROP.VALUE'] = $userId;
-        } else {
-            $filter['ID'] = 0;
-        }
+        $filter = match ($role) {
+            'admin'   => [],
+            'teacher' => ['AUTHOR_PROP.VALUE' => $userId],
+            'student' => ['STUDENTS_PROP.VALUE' => $userId],
+            default   => throw new \Exception('Доступ запрещён'),
+        };
 
         $result = self::getList($arRequest, $filter);
-        $result['items'] = array_map(fn($row) => self::mapRow($row, false), $result['items']);
+        $result['items'] = array_map(
+            fn($row) => self::mapRow($row),
+            $result['items']
+        );
 
         return $result;
     }
 
     // Получение курсов по ID
     // /api/Courses/getById/?id=
-    public static function getById(array $arRequest): ?array
+    public static function getById(array $arRequest): array
     {
-        $id = (int)($arRequest['id'] ?? 0);
-        if (!$id) throw new \Exception('Не передан ID курса');
-
-        $userId = UserMapper::getCurrentUserId();
-        if (!$userId) throw new \Exception('Неавторизованный пользователь');
-
-        $userGroups = UserMapper::getCurrentUserGroups();
-        $fullInfo = in_array(Constants::GROUP_ADMINS, $userGroups) || in_array(Constants::GROUP_TEACHERS, $userGroups);
-
-        $result = self::getList([], ['ID' => $id]);
-        if (empty($result['items'])) throw new \Exception('Курс с таким ID не найден');
-
-        $course = $result['items'][0];
-
-        if (in_array(Constants::GROUP_ADMINS, $userGroups)) {
-        } elseif (in_array(Constants::GROUP_TEACHERS, $userGroups)) {
-            if ((int)$course['AUTHOR_ID'] !== $userId) {
-                throw new \Exception('Доступ запрещен: это не ваш курс');
-            }
-        } elseif (in_array(Constants::GROUP_STUDENTS, $userGroups)) {
-            $studentIds = is_array($course['STUDENT_ID']) ? $course['STUDENT_ID'] : [$course['STUDENT_ID']];
-            if (!in_array($userId, $studentIds)) {
-                throw new \Exception('Доступ запрещен: вы не являетесь студентом этого курса');
-            }
-            $fullInfo = false;
-        } else {
-            throw new \Exception('Доступ запрещен');
+        $courseId = (int)($arRequest['id'] ?? 0);
+        if (!$courseId) {
+            throw new \Exception('Не передан ID курса');
         }
 
-        return [self::mapRow($course, $fullInfo)];
+        $access = CourseAccess::getCourseForView($courseId);
+
+        return [
+            self::mapRow(
+                $access['course'],
+                $access['fullInfo']
+            )
+        ];
     }
 
     // Получение курсов по преподавателю (ADMIN)
@@ -187,23 +131,22 @@ class Courses
     // /api/Courses/getByStudent/?id=
     public static function getByStudent(array $arRequest): array
     {
-        return self::getByRole($arRequest, 'STUDENTS_PROP.VALUE', true);
+        return self::getByRole($arRequest, 'STUDENTS_PROP.VALUE', false);
     }
 
-    private static function getByRole(array $arRequest, string $roleProp, bool $fullInfo): array
+    private static function getByRole(array $arRequest, string $prop, bool $fullInfo): array
     {
-        $userGroups = UserMapper::getCurrentUserGroups();
-        if (!in_array(Constants::GROUP_ADMINS, $userGroups)) {
-            throw new \Exception('Доступ запрещен: необходимо иметь роль администратора');
-        }
+        UserAccess::checkAdmin();
 
-        $id = (int)($arRequest['id'] ?? $_GET['id'] ?? 0);
-        if (!$id) throw new \Exception("Не указан ID для роли {$roleProp}");
+        $id = (int)($arRequest['id'] ?? 0);
+        if (!$id) throw new \Exception('Не передан ID');
 
-        $result = self::getList($arRequest, [$roleProp => $id]);
-        $withStudents= $roleProp !== 'STUDENTS_PROP.VALUE';
-
-        $result['items'] = array_map(fn($row) => self::mapRow($row, $fullInfo, $withStudents), $result['items']);
+        $withModules = $prop !== 'STUDENTS_PROP.VALUE';
+        $result = self::getList($arRequest, [$prop => $id]);
+        $result['items'] = array_map(
+            fn($row) => self::mapRow($row, $fullInfo, $withModules),
+            $result['items']
+        );
 
         return $result;
     }
@@ -212,51 +155,34 @@ class Courses
     // /api/Courses/add/
     public static function add(array $arData): array
     {
-        $userId = UserMapper::getCurrentUserId();
-        if (!$userId) throw new \Exception('Неавторизованный пользователь');
+        CourseAccess::assertTeacherOrAdmin();
 
-        $userGroups = UserMapper::getCurrentUserGroups();
-        if (!in_array(Constants::GROUP_ADMINS, $userGroups) && !in_array(Constants::GROUP_TEACHERS, $userGroups)) {
-            throw new \Exception('Доступ запрещен: только админ или преподаватель');
-        }
-
+        $role = UserAccess::getUserRole();
         $name = trim($arData['name'] ?? '');
-        $description = $arData['description'] ?? '';
-
+        $description = trim($arData['description'] ?? '');
         if ($name === '' || $description === '') {
-            throw new \Exception('Обязательные поля: name, description');
+            throw new \Exception('name и description обязательны');
         }
 
-        if (in_array(Constants::GROUP_TEACHERS, $userGroups)) {
-            $authorId = $userId;
-        } elseif (in_array(Constants::GROUP_ADMINS, $userGroups)) {
-            if (empty($arData['author_id'])) {
-                throw new \Exception('Админ должен указать author_id (ID преподавателя)');
-            }
-            $authorId = (int)$arData['author_id'];
-        }
+        $authorId = $role === 'teacher'
+            ? UserAccess::getCurrentUserId()
+            : (int)($arData['author_id'] ?? 0);
 
-        $author = self::getUserByIdSafe($authorId);
-        if (!$author) throw new \Exception('Автор не найден');
-
-        $authorGroups = UserMapper::getUserGroups($author['ID'] ?? 0);
-        if (!in_array(Constants::GROUP_TEACHERS, $authorGroups)) {
+        $author = UserAccess::getUserById($authorId);
+        if (!$author || UserAccess::getUserRole($authorId) !== 'teacher') {
             throw new \Exception('Автор должен быть преподавателем');
         }
 
-        $fields = [
-            'NAME' => $name,
-            'DESCRIPTION' => self::mapDescription($description),
+        $id = CoursesTable::addCourse([
+            'NAME'        => $name,
+            'DESCRIPTION' => Mappers::mapDescription($description),
             'AUTHOR_PROP' => $author,
-        ];
+        ]);
 
-        $id = CoursesTable::addCourse($fields);
-        if (!$id) throw new \Exception('Не удалось создать курс');
+        if (!$id) throw new \Exception('Ошибка создания курса');
 
         return [
-            'success' => true,
-            'ID' => $id,
-            'message' => 'Курс успешно создан'
+            'success' => true, 'ID' => $id, 'message' => 'Курс успешно создан'
         ];
     }
 
@@ -266,38 +192,8 @@ class Courses
     {
         $courseId = (int)($arData['course_id'] ?? 0);
         $studentId = (int)($arData['student_id'] ?? 0);
-        if (!$courseId || !$studentId) {
-            throw new \Exception('Не передан course_id или student_id');
-        }
 
-        $userId = UserMapper::getCurrentUserId();
-        $userGroups = UserMapper::getCurrentUserGroups();
-
-        if (!in_array(Constants::GROUP_ADMINS, $userGroups) && !in_array(Constants::GROUP_TEACHERS, $userGroups)) {
-            throw new \Exception('Доступ запрещен: только админ или преподаватель');
-        }
-
-        $course = self::getById(['id' => $courseId])[0];
-
-        if (in_array(Constants::GROUP_TEACHERS, $userGroups) && $course['AUTHOR']['ID'] != $userId) {
-            throw new \Exception('Доступ запрещен: это не ваш курс');
-        }
-
-        $student = self::getUserByIdSafe($studentId);
-        if (!$student) throw new \Exception('Студент не найден');
-
-        $students = $course['STUDENTS'] ? array_column($course['STUDENTS'], 'ID') : [];
-
-        if (in_array($studentId, $students)) {
-            throw new \Exception('Студент уже добавлен в курс');
-        }
-
-        $students[] = $studentId;
-        \CIBlockElement::SetPropertyValuesEx($courseId, Constants::IB_COURSES, [
-            Constants::COURSE_STUDENTS => $students
-        ]);
-
-        return ['success' => true, 'message' => 'Студент успешно добавлен в курс'];
+        return self::updateCourseStudents($courseId, $studentId, 'add');
     }
 
     // Удаление студента из курса
@@ -306,30 +202,45 @@ class Courses
     {
         $courseId = (int)($arData['course_id'] ?? 0);
         $studentId = (int)($arData['student_id'] ?? 0);
+
+        return self::updateCourseStudents($courseId, $studentId, 'remove');
+    }
+
+    private static function updateCourseStudents(int $courseId, int $studentId, string $action): array
+    {
         if (!$courseId || !$studentId) {
             throw new \Exception('Не передан course_id или student_id');
         }
 
-        $userId = UserMapper::getCurrentUserId();
-        $userGroups = UserMapper::getCurrentUserGroups();
+        $course = CourseAccess::getCourseForManage($courseId);
 
-        if (!in_array(Constants::GROUP_ADMINS, $userGroups) && !in_array(Constants::GROUP_TEACHERS, $userGroups)) {
-            throw new \Exception('Доступ запрещен: только админ или преподаватель');
+        $students = [];
+        if (!empty($course['STUDENT_ID'])) {
+            if (isset($course['STUDENT_ID']['VALUE']) && is_array($course['STUDENT_ID']['VALUE'])) {
+                $students = $course['STUDENT_ID']['VALUE'];
+            } elseif (is_array($course['STUDENT_ID'])) {
+                $students = $course['STUDENT_ID'];
+            } elseif (is_string($course['STUDENT_ID'])) {
+                $students = array_filter(explode(',', $course['STUDENT_ID']));
+            }
+            $students = array_map('intval', $students);
         }
 
-        $course = self::getById(['id' => $courseId])[0];
-
-        if (in_array(Constants::GROUP_TEACHERS, $userGroups) && $course['AUTHOR']['ID'] != $userId) {
-            throw new \Exception('Доступ запрещен: это не ваш курс');
+        if ($action === 'add') {
+            if (in_array($studentId, $students, true)) {
+                throw new \Exception('Студент уже добавлен в курс');
+            }
+            $students[] = $studentId;
+            $message = 'Студент успешно добавлен в курс';
+        } elseif ($action === 'remove') {
+            if (!in_array($studentId, $students, true)) {
+                throw new \Exception('Студента нет в курсе');
+            }
+            $students = array_values(array_filter($students, fn($id) => $id != $studentId));
+            $message = 'Студент успешно удалён из курса';
+        } else {
+            throw new \Exception('Неверное действие');
         }
-
-        $students = $course['STUDENTS'] ? array_column($course['STUDENTS'], 'ID') : [];
-
-        if (!in_array($studentId, $students)) {
-            throw new \Exception('Студента нет в курсе');
-        }
-
-        $students = array_values(array_filter($students, fn($id) => $id != $studentId));
 
         \CIBlockElement::SetPropertyValuesEx(
             $courseId,
@@ -337,7 +248,7 @@ class Courses
             [Constants::COURSE_STUDENTS => $students ?: false]
         );
 
-        return ['success' => true, 'message' => 'Студент успешно удалён из курса'];
+        return ['success' => true, 'message' => $message];
     }
 
     // Удаление курса
@@ -345,32 +256,16 @@ class Courses
     public static function delete(array $arData): array
     {
         $courseId = (int)($arData['id'] ?? 0);
-        if (!$courseId) {
-            throw new \Exception('Не передан ID курса');
-        }
+        if (!$courseId) throw new \Exception('Не передан ID курса');
 
-        $userId = UserMapper::getCurrentUserId();
-        if (!$userId) throw new \Exception('Неавторизованный пользователь');
-
-        $userGroups = UserMapper::getCurrentUserGroups();
-        if (!in_array(Constants::GROUP_ADMINS, $userGroups) && !in_array(Constants::GROUP_TEACHERS, $userGroups)) {
-            throw new \Exception('Доступ запрещен: только админ или преподаватель');
-        }
-
-        $course = self::getById(['id' => $courseId])[0];
-
-        if (in_array(Constants::GROUP_TEACHERS, $userGroups) && $course['AUTHOR']['ID'] != $userId) {
-            throw new \Exception('Доступ запрещен: это не ваш курс');
-        }
+        CourseAccess::getCourseForManage($courseId);
 
         if (!\CModule::IncludeModule('iblock')) {
             throw new \Exception('Не удалось подключить модуль iblock');
         }
 
         $el = new \CIBlockElement();
-        $deleted = $el->Delete($courseId);
-
-        if (!$deleted) {
+        if (!$el->Delete($courseId)) {
             throw new \Exception('Не удалось удалить курс');
         }
 

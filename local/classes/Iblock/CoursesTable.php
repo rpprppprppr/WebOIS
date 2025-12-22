@@ -26,7 +26,7 @@ class CoursesTable extends ElementTable
         ]);
     }
 
-    public static function withRuntimeProperties(Query $query)
+    public static function withRuntimeProperties(Query $query): void
     {
         $query->registerRuntimeField(
             'DESCRIPTION_PROP',
@@ -68,13 +68,13 @@ class CoursesTable extends ElementTable
         $query->addSelect('STUDENTS_PROP.VALUE', 'STUDENT_ID');
     }
 
-    public static function withFilter(Query $query, array $filter = [])
+    public static function withFilter(Query $query, array $filter = []): void
     {
         $defaultFilter = ['ACTIVE' => 'Y', 'IBLOCK_ID' => Constants::IB_COURSES];
         $query->setFilter(array_merge($defaultFilter, $filter));
     }
 
-    public static function withOrder(Query $query, array $order = [])
+    public static function withOrder(Query $query, array $order = []): void
     {
         if (empty($order)) {
             $order = ['ID' => 'ASC'];
@@ -82,7 +82,7 @@ class CoursesTable extends ElementTable
         $query->setOrder($order);
     }
 
-    public static function withPage(Query $query, int $limit = 50, int $page = 1)
+    public static function withPage(Query $query, int $limit = 50, int $page = 1): void
     {
         $query->setLimit($limit);
         $query->setOffset(($page - 1) * $limit);

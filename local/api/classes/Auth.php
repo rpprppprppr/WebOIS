@@ -58,6 +58,6 @@ class Auth
         if (!$USER->IsAuthorized()) throw new \Exception('Пользователь не авторизован');
 
         $arUser = CUser::GetByID($USER->GetID())->Fetch();
-        return UserMapper::map($arUser, true);
+        return Mappers::mapUser($arUser, true);
     }
 }

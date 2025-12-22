@@ -2,36 +2,16 @@
 namespace Legacy\API;
 
 use CUser;
+use Legacy\API\Access\UserAccess;
 use Legacy\General\Constants;
 
 class User
 {
-    private static function checkAuth(): int
-    {
-        $userId = UserMapper::getCurrentUserId();
-
-        if ($userId <= 0) {
-            throw new \Exception('Пользователь не авторизован');
-        }
-
-        return $userId;
-    }
-
-    private static function checkAdmin(): void
-    {
-        self::checkAuth();
-
-        if (!UserMapper::hasGroup(UserMapper::getCurrentUserId(), Constants::GROUP_ADMINS)) {
-            throw new \Exception('Доступ запрещен: требуется роль администратора');
-        }
-    }
-
-
     // Создание пользователя
     // /api/User/add/?login=test&password=123123&email=test@mail.ru&role=student
     public static function add(array $arRequest): array
     {
-        self::checkAdmin();
+        UserAccess::checkAdmin();
 
         $login    = trim($arRequest['login'] ?? '');
         $password = trim($arRequest['password'] ?? '');
@@ -71,19 +51,104 @@ class User
             throw new \Exception('Не удалось создать пользователя: ' . $user->LAST_ERROR);
         }
 
-        return ['status' => 'success', 'message' => 'Пользователь успешно создан'];
+        return [
+            'status' => 'success',
+            'ID' => $userId,
+            'message' => 'Пользователь успешно создан'];
     }
+
+    // Обновление пользователя
+    // /api/User/update/?id=5&login=newlogin&email=test@mail.ru&role=teacher
+    public static function update(array $arRequest): array
+    {
+        $currentUserId = UserAccess::checkAuth();
+        $isAdmin = UserAccess::getUserRole() === 'admin';
+
+        $userId = (int)($arRequest['id'] ?? 0);
+        if (!$userId) {
+            throw new \Exception('Не передан ID пользователя');
+        }
+
+        if (!$isAdmin && $userId !== $currentUserId) {
+            throw new \Exception('Недостаточно прав для редактирования пользователя');
+        }
+
+        $arUser = CUser::GetByID($userId)->Fetch();
+        if (!$arUser) {
+            throw new \Exception('Пользователь не найден');
+        }
+
+        $fields = [];
+
+        $map = [
+            'login'       => 'LOGIN',
+            'email'       => 'EMAIL',
+            'first_name'  => 'NAME',
+            'last_name'   => 'LAST_NAME',
+            'second_name' => 'SECOND_NAME',
+        ];
+
+        foreach ($map as $reqKey => $bitrixKey) {
+            if (isset($arRequest[$reqKey])) {
+                $fields[$bitrixKey] = trim($arRequest[$reqKey]);
+            }
+        }
+
+        if (!empty($arRequest['login'])) {
+            $login = trim($arRequest['login']);
+            if ($u = CUser::GetByLogin($login)->Fetch()) {
+                if ((int)$u['ID'] !== $userId) {
+                    throw new \Exception('Пользователь с таким логином уже существует');
+                }
+            }
+
+            $fields['LOGIN'] = $login;
+        }
+
+        if (!empty($arRequest['role'])) {
+            if (!$isAdmin) {
+                throw new \Exception('Изменение роли доступно только администратору');
+            }
+
+            $groupMap = [
+                'student' => Constants::GROUP_STUDENTS,
+                'teacher' => Constants::GROUP_TEACHERS,
+            ];
+
+            $role = strtolower(trim($arRequest['role']));
+            if (!isset($groupMap[$role])) {
+                throw new \Exception('Некорректная роль');
+            }
+
+            CUser::SetUserGroup($userId, [$groupMap[$role]]);
+        }
+
+        if (!$fields) {
+            throw new \Exception('Нет данных для обновления');
+        }
+
+        $user = new CUser();
+        if (!$user->Update($userId, $fields)) {
+            throw new \Exception('Ошибка обновления пользователя: ' . $user->LAST_ERROR);
+        }
+
+        return [
+            'status' => 'success',
+            'message' => 'Пользователь успешно обновлён',
+        ];
+    }
+
 
     // Удаление пользователя
     // /api/User/delete/?id=5
     public static function delete(array $arRequest): array
     {
-        self::checkAdmin();
+        UserAccess::checkAdmin();
 
         $userId = (int)($arRequest['id'] ?? 0);
         if (!$userId) throw new \Exception('Не передан ID пользователя');
 
-        if ($userId === UserMapper::getCurrentUserId()) {
+        if ($userId === UserAccess::getCurrentUserId()) {
             throw new \Exception('Нельзя удалить самого себя');
         }
 
@@ -106,7 +171,7 @@ class User
 
         $users = [];
         while ($arUser = $rsUsers->Fetch()) {
-            $users[] = UserMapper::map($arUser);
+            $users[] = Mappers::mapUser($arUser, false);
         }
 
         $total = CUser::GetList('ID', 'ASC', $filter)->SelectedRowsCount();
@@ -122,7 +187,7 @@ class User
     // /api/User/get/
     public static function get(array $arRequest = []): array
     {
-        self::checkAdmin();
+        UserAccess::checkAdmin();
 
         return self::getList($arRequest);
     }
@@ -131,7 +196,7 @@ class User
     // /api/User/getById/?id=
     public static function getById(array $arRequest): ?array
     {
-        self::checkAdmin();
+        UserAccess::checkAdmin();
 
         $userId = (int)($arRequest['id'] ?? 0);
         if (!$userId) throw new \Exception('Не передан ID пользователя');
@@ -139,14 +204,14 @@ class User
         $rsUser = CUser::GetByID($userId);
         $arUser = $rsUser->Fetch();
 
-        return $arUser ? UserMapper::map($arUser) : null;
+        return $arUser ? Mappers::mapUser($arUser, true) : null;
     }
 
     // Получение преподавателей
     // /api/User/getTeachers/
     public static function getTeachers(array $arRequest = []): array
     {
-        self::checkAdmin();
+        UserAccess::checkAdmin();
 
         return self::getList(array_merge($arRequest, ['filter' => ['GROUPS_ID' => Constants::GROUP_TEACHERS]]));
     }
@@ -155,7 +220,7 @@ class User
     // /api/User/getStudents/
     public static function getStudents(array $arRequest = []): array
     {
-        self::checkAdmin();
+        UserAccess::checkAdmin();
 
         return self::getList(array_merge($arRequest, ['filter' => ['GROUPS_ID' => Constants::GROUP_STUDENTS]]));
     }
