@@ -5,10 +5,15 @@ use CUser;
 use CFile;
 
 use Legacy\General\Constants;
+use Bitrix\Highloadblock\HighloadBlockTable;
+use Bitrix\Iblock\PropertyEnumerationTable;
 
 class Mappers
 {
     public static string $baseUrl = 'http://192.168.0.143';
+
+    private static array $typeCache = [];
+    private static array $statusCache = [];
 
     public static function formatDateRus(?string $dateTime): ?string
     {
@@ -76,6 +81,19 @@ class Mappers
     {
         $files = self::mapFiles($fileIds);
 
+        // Преобразуем TYPE из ID enum в текст
+        if (!empty($row['TYPE']) && is_numeric($row['TYPE'])) {
+            $typeId = (int)$row['TYPE'];
+            if (!isset(self::$typeCache[$typeId])) {
+                $res = PropertyEnumerationTable::getList([
+                    'filter' => ['ID' => $typeId],
+                    'select' => ['VALUE']
+                ]);
+                self::$typeCache[$typeId] = ($enum = $res->fetch()) ? $enum['VALUE'] : 'Неизвестный тип';
+            }
+            $row['TYPE'] = self::$typeCache[$typeId];
+        }
+
         $deadline = $row['DEADLINE'] ?? null;
         if (!empty($deadline) && $deadline !== 'Бессрочно') {
             $deadline = self::formatDateRus($deadline);
@@ -98,29 +116,31 @@ class Mappers
     {
         $student = $row['STUDENT'] ?? null;
         $module = $row['MODULE'] ?? null;
-        $files = [];
-        if (!empty($row['FILES'])) {
-            foreach ((array)$row['FILES'] as $fid) {
-                $file = CFile::GetFileArray($fid);
-                if ($file) {
-                    $files[] = [
-                        'ID' => (int)$file['ID'],
-                        'NAME' => $file['ORIGINAL_NAME'],
-                        'URL' => self::$baseUrl . CFile::GetPath($file['ID']),
-                    ];
-                }
-            }
+
+        if ($module) {
+            $module = self::mapModule($module, $module['FILES'] ?? []);
+        }
+
+        $files = self::mapFiles($row['FILES'] ?? []);
+
+        $score = $row['UF_SCORE'] !== null ? (int)$row['UF_SCORE'] : "Нет оценки";
+
+        // Преобразуем статус в текст
+        $status = $row['UF_STATUS'] ?? null;
+        if ($status !== null) {
+            $status = self::resolveSubmissionStatus($status);
         }
 
         return [
             'ID' => (int)$row['ID'],
             'STUDENT' => $student,
             'MODULE' => $module,
-            'SCORE' => isset($row['UF_SCORE']) ? (int)$row['UF_SCORE'] : null,
-            'STATUS' => $row['UF_STATUS'] ?? null,
+            'SCORE' => $score,
+            'STATUS' => $status,
             'ANSWER' => $row['UF_ANSWER'] ?? null,
+            'LINK' => $row['UF_LINK'] ?? null,
             'REVIEW_COMMENT' => $row['UF_REVIEW_COMMENT'] ?? null,
-            'DATE_SUBMITTED' => $row['UF_DATE_SUBMITTED'] ?? null,
+            'DATE_SUBMITTED' => isset($row['UF_DATE_SUBMITTED']) ? self::formatDateRus($row['UF_DATE_SUBMITTED']) : null,
             'FILES' => $files,
         ];
     }
@@ -135,17 +155,53 @@ class Mappers
 
     public static function mapFiles(array $fileIds): array
     {
-        $files = [];
-        foreach ($fileIds as $fid) {
+        return array_values(array_filter(array_map(function($fid) {
             $file = \CFile::GetFileArray($fid);
-            if ($file) {
-                $files[] = [
-                    'ID' => (int)$file['ID'],
-                    'NAME' => $file['ORIGINAL_NAME'],
-                    'URL' => Mappers::$baseUrl . \CFile::GetPath($file['ID']),
-                ];
+            return $file ? [
+                'ID' => (int)$file['ID'],
+                'NAME' => $file['ORIGINAL_NAME'],
+                'URL' => self::$baseUrl . \CFile::GetPath($file['ID']),
+            ] : null;
+        }, $fileIds)));
+    }
+
+    public static function resolveModuleType($type): int
+    {
+        if (is_numeric($type)) return (int)$type;
+
+        $type = trim((string)$type);
+
+        if (!isset(self::$typeCache[$type])) {
+            $res = PropertyEnumerationTable::getList([
+                'filter' => ['PROPERTY_ID' => Constants::MODULE_TYPE, '=XML_ID' => $type],
+                'select' => ['ID']
+            ]);
+            if ($row = $res->fetch()) {
+                self::$typeCache[$type] = (int)$row['ID'];
+            } else {
+                $res = PropertyEnumerationTable::getList([
+                    'filter' => ['PROPERTY_ID' => Constants::MODULE_TYPE],
+                    'select' => ['ID', 'VALUE']
+                ]);
+                while ($row = $res->fetch()) {
+                    if (mb_strtolower($row['VALUE']) === mb_strtolower($type)) {
+                        self::$typeCache[$type] = (int)$row['ID'];
+                        break;
+                    }
+                }
             }
         }
-        return $files;
+
+        return self::$typeCache[$type] ?? 0;
     }
+
+    public static function resolveSubmissionStatus($status): string {
+        if (empty($status)) return '';
+        $id = (int)$status;
+        $map = [
+            1 => 'Ожидает проверки',
+            2 => 'Оценен'
+        ];
+
+        return $map[$id] ?? 'Неизвестный статус'; }
 }
